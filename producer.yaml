@@ -1,0 +1,145 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Parameters:
+  CentralEventBusArn:
+    Type: String
+    Description: Central EventBridge Event Bus ARN"
+    AllowedPattern: ".+"
+  EventSourceCustomPrefix:
+    Type: String
+    Description: Custom prefix to event source (to allow republish of aws.* events)
+    AllowedPattern: ".+"
+
+Resources:
+  Rule1:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: Rule1
+      EventPattern: !Sub |-
+        { "account": [ { "exists": true } ] }
+      Targets:
+        - Id: Workflow
+          Arn: !Ref StateMachine
+          RoleArn: !GetAtt RuleRole.Arn
+          InputTransformer:
+            InputPathsMap: {}
+            InputTemplate: !Sub '{ "ruleArn": "<aws.events.rule-arn>", "event": <aws.events.event.json>, "assignment": "MyAssignment1" }'
+
+  Rule2:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: Rule2
+      EventPattern: !Sub |-
+        { "account": [ { "exists": true } ] }
+      Targets:
+        - Id: Workflow
+          Arn: !Ref StateMachine
+          RoleArn: !GetAtt RuleRole.Arn
+          InputTransformer:
+            InputPathsMap: {}
+            InputTemplate: !Sub '{ "ruleArn": "<aws.events.rule-arn>", "event": <aws.events.event.json>, "assignment": "MyAssignment2" }'
+
+  RuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "events.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: Amazone_EventBridge_Invoke_Step_Functions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "states:StartExecution"
+                Resource:
+                  - !Ref StateMachine
+
+  StateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      # Type: EXPRESS
+      DefinitionString: |-
+        {
+          "Comment": "Forward enriched event to central event bus",
+          "StartAt": "Publish event to central event bus",
+          "States": {
+            "Publish event to central event bus": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::events:putEvents",
+              "Parameters": {
+                "Entries": [
+                  {
+                    "EventBusName": "${CentralEventBusArn}",
+                    "Source.$": "States.Format('${EventSourceCustomPrefix}.{}', $.event.source)",
+                    "DetailType.$": "$.event.detail-type",
+                    "Detail": {
+                      "event.$": "$.event",
+                      "ruleArn.$": "$.ruleArn",
+                      "assignment.$": "$.assignment"
+                    }
+                  }
+                ]
+              },
+              "End": true
+            }
+          }
+        }
+      DefinitionSubstitutions:
+        CentralEventBusArn: !Ref CentralEventBusArn
+        EventSourceCustomPrefix: !Ref EventSourceCustomPrefix
+      TracingConfiguration:
+        Enabled: true
+      LoggingConfiguration:
+        IncludeExecutionData: true
+        Level: ALL
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt WorkflowLogGroup.Arn
+      RoleArn: !GetAtt StateMachineRole.Arn
+
+  StateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "states.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+      Policies:
+        - PolicyName: StateMachineRolePolicy1
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
+        - PolicyName: StateMachineRolePolicy2
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource: "*"
+
+  WorkflowLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vendedlogs/states/${AWS::StackName}-workflow"

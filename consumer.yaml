@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Parameters:
+  PermittedOrganizationId:
+    Type: String
+    Description: Organization ID permitted to publish events to the event bus
+    AllowedPattern: "^o-[a-z0-9]{10,32}$"
+
+Resources:
+  EventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub '${AWS::StackName}-event-bus'
+
+  EventBusPolicy:
+    Type: AWS::Events::EventBusPolicy
+    Properties:
+      EventBusName: !Ref EventBus
+      StatementId: !Sub "${AWS::StackName}-event-bus-policy"
+      Statement:
+        Effect: Allow
+        Principal: "*"
+        Action: events:PutEvents
+        Resource: !GetAtt EventBus.Arn
+        Condition:
+          StringEquals:
+            "aws:PrincipalOrgID": !Ref PermittedOrganizationId
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/events/${EventBus.Name}/logs'
+
+  Rule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: !Ref EventBus
+      Name: LogRule
+      EventPattern: !Sub |-
+        { "account": [ { "exists": true } ] }
+      Targets:
+        - Id: 'Logs'
+          Arn: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${LogGroup}"
+
+Outputs:
+  EventBusArn:
+    Description: "Central EventBridge Event Bus ARN"
+    Value: !GetAtt EventBus.Arn
+
+  LogGroupArn:
+    Description: "CloudWatch Log Group ARN"
+    Value: !Ref LogGroup
