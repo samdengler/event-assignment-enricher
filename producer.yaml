@@ -1,10 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
 Parameters:
-  CentralEventBusArn:
+  CentralAccountId:
     Type: String
-    Description: Central EventBridge Event Bus ARN"
-    AllowedPattern: ".+"
+    Description: Central Account ID"
+    AllowedPattern: "^[0-9]{12}$"
   EventSourceCustomPrefix:
     Type: String
     Description: Custom prefix to event source (to allow republish of aws.* events)
@@ -64,7 +64,9 @@ Resources:
     Type: AWS::StepFunctions::StateMachine
     Properties:
       # Type: EXPRESS
-      DefinitionString: |-
+      # arn:aws:events:us-east-1:068896461592:event-bus/enrich-consumer-event-bus
+      # "EventBusName": "${CentralEventBusArn}",
+      DefinitionString: !Sub |-
         {
           "Comment": "Forward enriched event to central event bus",
           "StartAt": "Publish event to central event bus",
@@ -75,7 +77,7 @@ Resources:
               "Parameters": {
                 "Entries": [
                   {
-                    "EventBusName": "${CentralEventBusArn}",
+                    "EventBusName": "arn:aws:events:${AWS::Region}:${CentralAccountId}:event-bus/enrich-consumer-event-bus",
                     "Source.$": "States.Format('${EventSourceCustomPrefix}.{}', $.event.source)",
                     "DetailType.$": "$.event.detail-type",
                     "Detail": {
@@ -91,7 +93,7 @@ Resources:
           }
         }
       DefinitionSubstitutions:
-        CentralEventBusArn: !Ref CentralEventBusArn
+        CentralEventBusArn: !Sub "arn:aws:events:${AWS::Region}:${CentralAccountId}:event-bus/enrich-consumer-event-bus"
         EventSourceCustomPrefix: !Ref EventSourceCustomPrefix
       TracingConfiguration:
         Enabled: true
